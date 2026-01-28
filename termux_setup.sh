@@ -3,9 +3,6 @@ GNU nano 8.7                                  setup.sh
 
 # MR YT Bug Scanner - Secure Installer
 # Created by: @mrxtopia
-
-# --- SECURITY CONFIG ---
-# SHA256 of "MRYT": ecc5c8fdd4084097ba3ff300809e674cb6a5807420a7c351b0394749f4070a9
 PASS_HASH="ecc5c8fdd4084097ba3ff301b9e189eb292d1b40f8fd00809e674cb6a5807420"
 GITHUB_URL="https://github.com/mrxtopia/snibug"
 INSTALL_DIR="$HOME/mr-yt-scanrne"
