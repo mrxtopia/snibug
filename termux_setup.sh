@@ -50,8 +50,7 @@ cd "$INSTALL_DIR"
 # Python Libraries
 echo -e "\e[1;34m[*] Installing Python requirements...\e[0m"
 python3 -m pip install --upgrade pip
-python3 -m pip install aiohttp asyncio dnspython python-whois requests beautifulsoup4 lxml rich webs>
-
+pip install -r requirements.txt
 # Permissions
 chmod +x main.py
 termux-setup-storage
