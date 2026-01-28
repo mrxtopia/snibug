@@ -39,6 +39,7 @@ sleep 1.5
 echo -e "\e[1;34m[*] Installing tool dependencies...\e[0m"
 pkg update -y && pkg upgrade -y
 pkg install -y python git openssl libffi clang make
+pkg install python libxml2 libxslt -y
 
 # Setup Directory
 echo -e "\e[1;34m[*] Setting up local environment...\e[0m"
