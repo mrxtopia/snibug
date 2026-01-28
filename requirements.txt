@@ -11,3 +11,6 @@ python-whois>=0.8.0
 websockets>=10.0
 geoip2>=4.6.0
 maxminddb>=2.2.0
+dnspython
+whoise
+httpx
