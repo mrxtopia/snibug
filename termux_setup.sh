@@ -1,12 +1,14 @@
+GNU nano 8.7                                  setup.sh
 #!/data/data/com.termux/files/usr/bin/bash
 
 # MR YT Bug Scanner - Secure Installer
 # Created by: @mrxtopia
 
 # --- SECURITY CONFIG ---
+# SHA256 of "MRYT": ecc5c8fdd4084097ba3ff300809e674cb6a5807420a7c351b0394749f4070a9
 PASS_HASH="ecc5c8fdd4084097ba3ff301b9e189eb292d1b40f8fd00809e674cb6a5807420"
 GITHUB_URL="https://github.com/mrxtopia/snibug"
-INSTALL_DIR="$HOME/mr-yt-scanner"
+INSTALL_DIR="$HOME/mr-yt-scanrne"
 # -----------------------
 
 clear
@@ -50,7 +52,7 @@ cd "$INSTALL_DIR"
 # Python Libraries
 echo -e "\e[1;34m[*] Installing Python requirements...\e[0m"
 python3 -m pip install --upgrade pip
-python3 -m pip install aiohttp asyncio dnspython python-whois requests beautifulsoup4 lxml rich websockets geoip2 httpx maxminddb
+python3 -m pip install aiohttp asyncio dnspython python-whois requests beautifulsoup4 lxml rich webs>
 
 # Permissions
 chmod +x main.py
@@ -62,7 +64,7 @@ if ! grep -q "alias mryt=" ~/.bashrc; then
     echo "alias mryt='cd $INSTALL_DIR && python3 main.py --ui'" >> ~/.bashrc
 fi
 
-echo -e "\e[1;32m[✔] MR YT Bug Scanner Installed Successfully!\e[0m"
+echo -e "\e[1;32m[✔️] MR YT Bug Scanner Installed Successfully!\e[0m"
 echo -e "\e[1;37m[i] Run: \e[1;32msource ~/.bashrc\e[0m"
 echo -e "\e[1;37m[i] Type \e[1;32mmryt\e[0m to start the tool."
 echo ""
