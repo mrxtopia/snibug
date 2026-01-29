@@ -46,6 +46,31 @@ def verify_integrity():
 # Run integrity check before anything else
 verify_integrity()
 
+def check_installation_lock():
+    """Ensure the tool was installed via the official setup script."""
+    marker_path = os.path.join(BASE_DIR, ".setup_success")
+    expected_token = "dcf6667527632669e4f1659a8508f7f2b17f3521b44318357f49553f1947b56a"
+    
+    lock_error = """
+\033[1;31m[!] SECURITY LOCK: ILLEGAL INSTALLATION DETECTED\033[0m
+\033[1;33m[!] Error: The tool must be installed via 'termux_setup.sh'.\033[0m
+\033[1;37m[!] Manual cloning/copying is not allowed for security reasons.\033[0m
+\033[1;32m[+] Run: bash termux_setup.sh to fix this.\033[0m
+"""
+    
+    if not os.path.exists(marker_path):
+        print(lock_error)
+        sys.exit(1)
+        
+    with open(marker_path, "r") as f:
+        actual_token = f.read().strip()
+        if actual_token != expected_token:
+            print(lock_error)
+            sys.exit(1)
+
+# Check installation lock
+check_installation_lock()
+
 from ui.console import AppUI
 from modules.sni_scanner import SNIScanner
 from modules.host_analyzer import HostAnalyzer
