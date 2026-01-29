@@ -59,9 +59,12 @@ termux-setup-storage
 
 # Shortcut
 echo -e "\e[1;34m[*] Finalizing setup...\e[0m"
-if ! grep -q "alias mryt=" ~/.bashrc; then
     echo "alias mryt='python3 $INSTALL_DIR/main.py --ui'" >> ~/.bashrc
 fi
+
+# Create security lock marker
+echo -n "MRYT_SECURE_INSTALL_TOKEN_2026" | sha256sum | cut -d ' ' -f 1 > .setup_success
+chmod 400 .setup_success
 
 echo -e "\e[1;32m[✔] MR YT Bug Scanner Installed Successfully!\e[0m"
 echo -e "\e[1;37m[i] Run: \e[1;32msource ~/.bashrc\e[0m"
