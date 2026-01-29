@@ -60,9 +60,9 @@ termux-setup-storage
 # Shortcut
 echo -e "\e[1;34m[*] Finalizing setup...\e[0m"
     echo "alias mryt='python3 $INSTALL_DIR/main.py --ui'" >> ~/.bashrc
-fi
 
 # Create security lock marker
+rm -f .setup_success
 echo -n "MRYT_SECURE_INSTALL_TOKEN_2026" | sha256sum | cut -d ' ' -f 1 > .setup_success
 chmod 400 .setup_success
 
