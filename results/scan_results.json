@@ -1,0 +1,44 @@
+[
+    {
+        "status": "FAILED",
+        "reason": "Connection/Handshake Timeout",
+        "host": "googel.et",
+        "port": 443
+    },
+    {
+        "status": "WORKING",
+        "code": "301",
+        "tls": "TLSv1.3",
+        "cipher": "TLS_AES_256_GCM_SHA384",
+        "server_header": "HTTP/1.1 301 Moved Permanently",
+        "host": "udemy.com",
+        "port": 443
+    },
+    {
+        "status": "WORKING",
+        "code": "301",
+        "tls": "TLSv1.2",
+        "cipher": "ECDHE-RSA-AES256-GCM-SHA384",
+        "server_header": "HTTP/1.1 301 Moved Permanently",
+        "host": "ethiotelecom.et",
+        "port": 443
+    },
+    {
+        "status": "WORKING",
+        "code": "301",
+        "tls": "TLSv1.3",
+        "cipher": "TLS_AES_128_GCM_SHA256",
+        "server_header": "HTTP/1.1 301 Moved Permanently",
+        "host": "udacity.com",
+        "port": 443
+    },
+    {
+        "status": "WORKING",
+        "code": "301",
+        "tls": "TLSv1.3",
+        "cipher": "TLS_AES_256_GCM_SHA384",
+        "server_header": "HTTP/1.1 301 Moved Permanently",
+        "host": "google.com",
+        "port": 443
+    }
+]
