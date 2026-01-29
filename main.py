@@ -49,7 +49,7 @@ verify_integrity()
 def check_installation_lock():
     """Ensure the tool was installed via the official setup script."""
     marker_path = os.path.join(BASE_DIR, ".setup_success")
-    expected_token = "4ca7c61a1e30807d8d36f68782ddba3bdaaa2c166c42dbf7e9ad2f80ead8fd8dd"
+    expected_token = "INSTALLED_BY_MRYT_INSTALLER_2026"
     
     lock_error = """
 \033[1;31m[!] SECURITY LOCK: ILLEGAL INSTALLATION DETECTED\033[0m
