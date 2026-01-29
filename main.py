@@ -49,7 +49,7 @@ verify_integrity()
 def check_installation_lock():
     """Ensure the tool was installed via the official setup script."""
     marker_path = os.path.join(BASE_DIR, ".setup_success")
-    expected_token = "dcf6667527632669e4f1659a8508f7f2b17f3521b44318357f49553f1947b56a"
+    expected_token = "4ca7c61a1e30807d8d36f68782ddba3bdaaa2c166c42dbf7e9ad2f80ead8fd8dd"
     
     lock_error = """
 \033[1;31m[!] SECURITY LOCK: ILLEGAL INSTALLATION DETECTED\033[0m
