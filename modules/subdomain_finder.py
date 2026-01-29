@@ -7,7 +7,7 @@ from typing import List, AsyncGenerator, Set
 class SubdomainFinder:
     def __init__(self, wordlist: List[str] = None):
         self.wordlist = wordlist or ["www", "api", "cdn", "blog", "shop", "admin", "mail", "vpn", "ns1", "test"]
-        self.resolver = dns.asyncresolver.Resolver()
+        self.resolver = dns.asyncresolver.Resolver(configure=False)
         self.resolver.nameservers = ['1.1.1.1', '8.8.8.8']
 
     async def _fetch_crtsh(self, domain: str) -> Set[str]:
