@@ -59,16 +59,12 @@ def check_installation_lock():
 """
     
     if not os.path.exists(marker_path):
-        print(f"\033[1;33m[!] Debug: Marker not found at {marker_path}\033[0m")
         print(lock_error)
         sys.exit(1)
         
     with open(marker_path, "r") as f:
         actual_token = f.read().strip()
         if actual_token != expected_token:
-            print(f"\033[1;33m[!] Debug: Token mismatch.\033[0m")
-            print(f"\033[1;33m[!] Debug: Expected: {expected_token}\033[0m")
-            print(f"\033[1;33m[!] Debug: Actual:   {actual_token}\033[0m")
             print(lock_error)
             sys.exit(1)
 
