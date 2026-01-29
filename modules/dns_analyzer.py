@@ -4,7 +4,7 @@ from typing import Dict, List
 
 class DNSAnalyzer:
     def __init__(self):
-        self.resolver = dns.asyncresolver.Resolver()
+        self.resolver = dns.asyncresolver.Resolver(configure=False)
         self.resolver.nameservers = ['1.1.1.1', '8.8.8.8']
         self.record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME']
 
