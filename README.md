@@ -16,17 +16,9 @@ A modular, multi-tool reconnaissance suite for discovering and validating bug ho
 pkg update && pkg upgrade
 pkg install python git
 git clone https://github.com/yourusername/sni-scanner.git
-cd sni-scanner
+cd snibug
 pip install -r requirements.txt
-python main.py
-```
-
-### Windows / Linux / macOS
-```bash
-git clone https://github.com/yourusername/sni-scanner.git
-cd sni-scanner
-pip install -r requirements.txt
-python main.py
+bash termux_setup.sh
 ```
 
 ## Usage
@@ -45,3 +37,4 @@ python main.py --ui
 - **SNI Scanner**: Validates SSL/TLS handshakes.
 - **CDN Detector**: Identifies Cloudflare, Cloudfront, Akamai, etc.
 - **Zero-Rate Tester**: Heuristics for free data capabilities.
+
