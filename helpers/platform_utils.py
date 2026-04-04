@@ -8,6 +8,32 @@ def is_termux():
     """Detect if running in Termux environment."""
     return os.path.exists('/data/data/com.termux') or 'com.termux' in os.environ.get('PREFIX', '')
 
+
+def default_scan_threads() -> int:
+    """Concurrent probes for SNI / HTTP scans (tuned for Termux vs desktop)."""
+    try:
+        v = int(os.environ.get("SNIBUG_THREADS", "0"))
+        if 0 < v <= 512:
+            return v
+    except ValueError:
+        pass
+    cpu = os.cpu_count() or 4
+    if is_termux():
+        return min(96, max(24, cpu * 8))
+    return min(256, max(48, cpu * 24))
+
+
+def default_scan_timeout() -> int:
+    """Seconds per connection/read for mass scans."""
+    try:
+        t = int(os.environ.get("SNIBUG_TIMEOUT", "0"))
+        if 0 < t <= 120:
+            return t
+    except ValueError:
+        pass
+    return 5
+
+
 def is_windows():
     """Check if running on Windows."""
     return platform.system() == 'Windows'

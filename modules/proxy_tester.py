@@ -38,10 +38,10 @@ class ProxyTester:
         if not ports:
             ports = [80, 8080, 8888, 3128]
         
-        results = []
-        for port in ports:
+        async def one(port: int):
             res = await self.test_http_connect(host, port)
-            res['host'] = host
-            res['port'] = port
-            results.append(res)
-        return results
+            res["host"] = host
+            res["port"] = port
+            return res
+
+        return await asyncio.gather(*[one(p) for p in ports])

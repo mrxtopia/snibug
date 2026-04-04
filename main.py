@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
-import os
 import hashlib
-import sys
-from typing import List
-import webbrowser
+import os
+import re
+import shutil
 import subprocess
+import sys
+import tempfile
+from typing import List, Optional, Tuple
+
+import webbrowser
 
 # --- SECURITY SYSTEM ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,10 +20,10 @@ from version import VERSION  # noqa: E402
 
 # Expected SHA-256 hashes of protected files (update when those files change).
 EXPECTED_HASHES = {
-    "version.py": "3dbccf9d1fbc92e0a41e164e9de076ef1e2815019ea0d51e101454745df9a79a",
-    "ui/console.py": "9ca921d017984475dfcc9c094915032f133c7f6df90693ae91c78823e2083388",
-    "core/network.py": "f026937f5f62c62cec8e38df17ce25a7c57a63980698c385bcca0c4870a3319e",
-    "modules/sni_scanner.py": "1dceed0256911857984e017c055406833dd0e137ea6ea91d1a7252c382b7691d",
+    "version.py": "f29e1f9ca9e8ed58224173e23b67b2aa366750122b0b57f035ee4f2c4df99d9d",
+    "ui/console.py": "35ccb0418f5d4f5d2848b9a14114c54f6ac26b5caeb3ffb9c2cc4cad0f4ee60d",
+    "core/network.py": "4faab6295bd257c5bdb6967626272de56b03d66bf4d677dfa991dc9da1e91fe9",
+    "modules/sni_scanner.py": "6e8ad9653e876acd54bbd128fdbf19e1871bc1c1a8ec6d3209c54e3afce16ea3",
     "modules/payload_tester.py": "3b1d643b70e138b0e6957660e97189bdae8a3001f8bc9d4b85d14e8896330828",
     "modules/websocket_scanner.py": "25e1e34284b79420e0056f258c11511d8d6a7be0c73ad0534ace182bd768d910",
     "modules/cdn_detector.py": "c788c7337b4bdcb5568f0477b0481f1b5279d9e23de5e17d6ae7169e7c066659",
@@ -98,15 +102,60 @@ from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 from export.saver import ResultSaver
+from helpers.platform_utils import default_scan_threads, default_scan_timeout
 
 console = Console()
 app_ui = AppUI()
 
+GITHUB_REPO_GIT = "https://github.com/mrxtopia/snibug.git"
+GITHUB_RAW_VERSION_PY = "https://raw.githubusercontent.com/mrxtopia/snibug/main/version.py"
+
 GLOBAL_CONFIG = {
-    "threads": 10,
-    "timeout": 10,
+    "threads": default_scan_threads(),
+    "timeout": default_scan_timeout(),
     "export_format": "json",
 }
+
+
+def _parse_version_from_py_text(text: str) -> str:
+    m = re.search(r'^\s*VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+
+def _version_tuple(ver: str) -> Tuple[int, ...]:
+    ver = ver.strip().lstrip("vV")
+    parts: List[int] = []
+    for seg in re.split(r"[.\-]+", ver):
+        if seg.isdigit():
+            parts.append(int(seg))
+        elif seg:
+            parts.append(0)
+    return tuple(parts) if parts else (0,)
+
+
+def _remote_is_newer(remote: str, local: str) -> bool:
+    return _version_tuple(remote) > _version_tuple(local)
+
+
+def _sync_repo_into_base(src_root: str, dst_root: str) -> None:
+    skip_top = {
+        ".git",
+        "__pycache__",
+        "results",
+        ".venv",
+        "venv",
+        "terminals",
+        ".cursor",
+    }
+    for name in os.listdir(src_root):
+        if name in skip_top:
+            continue
+        s = os.path.join(src_root, name)
+        d = os.path.join(dst_root, name)
+        if os.path.isdir(s):
+            shutil.copytree(s, d, dirs_exist_ok=True)
+        else:
+            shutil.copy2(s, d)
 
 REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
@@ -228,7 +277,7 @@ async def run_ssl_sni_analysis(config: dict):
 
     timeout = int(config.get("timeout", GLOBAL_CONFIG["timeout"]))
     threads = int(config.get("threads", GLOBAL_CONFIG["threads"]))
-    concurrency = min(32, max(2, threads))
+    concurrency = min(128, max(2, threads))
     targets = [HostAnalyzer.parse_target(h) for h in hosts]
     analyzer = HostAnalyzer(timeout=timeout)
     sem = asyncio.Semaphore(concurrency)
@@ -361,22 +410,20 @@ async def run_custom_method_scan(config: dict):
     console.print(f"[green]Results saved to:\n- {json_path}\n- {txt_path}[/green]")
 
 async def run_multi_mode_scan(config: dict):
-    """Multi-mode batch scanning."""
-    console.print("[bold cyan]Starting Multi-Mode Batch Scan...[/bold cyan]")
-    
+    """Multi-mode batch scanning (parallel TLS probes)."""
+    console.print("[bold cyan]Starting Multi-Mode Batch Scan (parallel)...[/bold cyan]")
+
     hosts = []
-    if 'input_file' in config:
+    if "input_file" in config:
         try:
-            with open(config['input_file'], 'r') as f:
-                hosts = [l.strip() for l in f if l.strip()]
-        except: pass
-    
+            with open(config["input_file"], "r", encoding="utf-8") as f:
+                hosts = [ln.strip() for ln in f if ln.strip()]
+        except OSError:
+            pass
+
     if not hosts:
         console.print("[red]Error: Hosts file required for batch scan.[/red]")
         return
-
-    analyzer = HostAnalyzer()
-    rows = []
 
     def _parse_target(line: str):
         s = line.strip().replace("https://", "").replace("http://", "").strip("/")
@@ -386,28 +433,43 @@ async def run_multi_mode_scan(config: dict):
                 return h, int(p)
         return s, 443
 
+    to = int(config.get("timeout", GLOBAL_CONFIG["timeout"]))
+    th = min(96, max(4, int(config.get("threads", GLOBAL_CONFIG["threads"]))))
+    analyzer = HostAnalyzer(timeout=to)
+    sem = asyncio.Semaphore(th)
+    rows: List[Optional[Tuple[str, str, str]]] = [None] * len(hosts)
+
+    async def work(i: int, line: str):
+        host, port = _parse_target(line)
+        async with sem:
+            res = await analyzer.analyze(host, port)
+        modes = ", ".join(res.get("modes") or [])
+        err = res.get("error", "")
+        if err:
+            note = err
+        else:
+            note = f"HTTP {res.get('http_status', '—')} · {res.get('tls_version', '—')}"
+        rows[i] = (f"{host}:{port}", modes or "—", note)
+
     with Progress() as progress:
         task = progress.add_task("[cyan]Analyzing hosts...", total=len(hosts))
-        for line in hosts:
-            host, port = _parse_target(line)
-            res = await analyzer.analyze(host, port)
-            modes = ", ".join(res.get("modes") or [])
-            err = res.get("error", "")
-            if err:
-                note = err
-            else:
-                note = f"HTTP {res.get('http_status', '—')} · {res.get('tls_version', '—')}"
-            rows.append((f"{host}:{port}", modes or "—", note))
-            progress.update(task, advance=1)
+
+        async def tracked(i: int, line: str):
+            await work(i, line)
+            progress.advance(task)
+
+        await asyncio.gather(*(tracked(i, ln) for i, ln in enumerate(hosts)))
+
+    ordered = [r for r in rows if r is not None]
 
     table = Table(title="Multi-mode batch results")
     table.add_column("Target", style="cyan")
     table.add_column("Modes", style="green")
     table.add_column("Note", style="dim")
-    for target, modes, note in rows[:200]:
+    for target, modes, note in ordered[:200]:
         table.add_row(target, modes, note)
-    if len(rows) > 200:
-        console.print(f"[dim]Showing 200 of {len(rows)} rows.[/dim]")
+    if len(ordered) > 200:
+        console.print(f"[dim]Showing 200 of {len(ordered)} rows.[/dim]")
     console.print(table)
     console.print("[green]Multi-mode scan complete![/green]")
 
@@ -929,57 +991,92 @@ async def handle_about_me():
             break
 
 async def handle_update():
-    """Compare local version to GitHub and update via git pull when available."""
-    console.print("[bold cyan]Checking for updates...[/bold cyan]")
-    repo_url = "https://github.com/mrxtopia/snibug"
-    raw_version_url = "https://raw.githubusercontent.com/mrxtopia/snibug/main/version.py"
-
+    """Compare local VERSION to GitHub main version.py; git pull or shallow-clone sync."""
+    console.print("[bold cyan]Checking GitHub (mrxtopia/snibug) for updates...[/bold cyan]")
     try:
         import aiohttp
 
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(raw_version_url) as resp:
+            async with session.get(GITHUB_RAW_VERSION_PY) as resp:
                 if resp.status != 200:
-                    console.print("[red]Could not fetch version from GitHub.[/red]")
+                    console.print(f"[red]Could not fetch version.py (HTTP {resp.status}).[/red]")
                     return
-                content = await resp.text()
-
-        remote_version = "Unknown"
-        for line in content.split("\n"):
-            line = line.split("#")[0].strip()
-            if line.startswith("VERSION"):
-                _, _, rhs = line.partition("=")
-                remote_version = rhs.strip().strip('"').strip("'")
-                break
-
-        if remote_version == "Unknown":
-            console.print("[red]Could not parse remote version file.[/red]")
-            return
-
-        if remote_version != VERSION:
-            console.print(f"[bold green]Update available[/bold green] (v{VERSION} → v{remote_version})")
-            if not Confirm.ask("Run git pull in this folder now?"):
-                return
-            git_dir = os.path.join(BASE_DIR, ".git")
-            if os.path.isdir(git_dir):
-                try:
-                    subprocess.run(
-                        ["git", "pull"],
-                        cwd=BASE_DIR,
-                        check=True,
-                    )
-                    console.print("[bold green]Update complete. Restart the tool.[/bold green]")
-                    sys.exit(0)
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    console.print(f"[red]Git pull failed: {e}[/red]")
-            console.print(
-                f"[yellow]This folder is not a git clone. Download the full project from:[/yellow]\n[cyan]{repo_url}[/cyan]"
-            )
-        else:
-            console.print("[green]You are on the latest version.[/green]")
+                remote_text = await resp.text()
     except Exception as e:
         console.print(f"[red]Update check failed: {e}[/red]")
+        return
+
+    remote_version = _parse_version_from_py_text(remote_text)
+    if not remote_version:
+        console.print("[red]Could not parse VERSION from GitHub version.py.[/red]")
+        return
+
+    if remote_version == VERSION:
+        console.print(f"[green]You are up to date (v{VERSION}).[/green]")
+        return
+
+    if not _remote_is_newer(remote_version, VERSION):
+        console.print(
+            f"[yellow]GitHub: v{remote_version} | Local: v{VERSION} (local is newer or different).[/yellow]"
+        )
+        if not Confirm.ask("Sync files from GitHub main anyway?", default=False):
+            return
+    else:
+        console.print(f"[bold green]Update available:[/bold green] v{VERSION} [dim]->[/dim] v{remote_version}")
+        if not Confirm.ask("Apply update now?", default=True):
+            return
+
+    git_dir = os.path.join(BASE_DIR, ".git")
+    if os.path.isdir(git_dir):
+        try:
+            console.print("[yellow]Updating with git...[/yellow]")
+            fetch = subprocess.run(
+                ["git", "-C", BASE_DIR, "fetch", "origin"],
+                capture_output=True,
+                text=True,
+            )
+            if fetch.returncode != 0:
+                console.print(f"[red]git fetch failed:[/red]\n[dim]{fetch.stderr or fetch.stdout}[/dim]")
+                return
+            pull = subprocess.run(
+                ["git", "-C", BASE_DIR, "pull", "--ff-only"],
+                capture_output=True,
+                text=True,
+            )
+            if pull.returncode != 0:
+                pull = subprocess.run(
+                    ["git", "-C", BASE_DIR, "pull", "origin", "main"],
+                    capture_output=True,
+                    text=True,
+                )
+            if pull.returncode != 0:
+                console.print(f"[red]git pull failed. Open a terminal in:\n  {BASE_DIR}\n[/red]")
+                console.print(f"[dim]{pull.stderr or pull.stdout}[/dim]")
+                return
+            console.print("[bold green]Git update complete. Restart the tool.[/bold green]")
+            sys.exit(0)
+        except FileNotFoundError:
+            console.print("[yellow]git not in PATH; trying shallow clone instead...[/yellow]")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="snibug_upd_") as tmp:
+            clone_path = os.path.join(tmp, "repo")
+            console.print("[yellow]Cloning latest (depth 1)...[/yellow]")
+            cr = subprocess.run(
+                ["git", "clone", "--depth", "1", GITHUB_REPO_GIT, clone_path],
+                capture_output=True,
+                text=True,
+            )
+            if cr.returncode != 0:
+                console.print(f"[red]git clone failed:[/red]\n[dim]{cr.stderr or cr.stdout}[/dim]")
+                console.print(f"[yellow]Install git, then:[/yellow] git clone {GITHUB_REPO_GIT}")
+                return
+            _sync_repo_into_base(clone_path, BASE_DIR)
+        console.print(f"[bold green]Project files synced to v{remote_version}. Restart the tool.[/bold green]")
+        sys.exit(0)
+    except Exception as e:
+        console.print(f"[red]Update failed: {e}[/red]")
 
 def handle_view_results():
     """View previous scan results."""
@@ -1200,7 +1297,12 @@ def main():
     parser.add_argument("--scan-sni", action="store_true", help="Run SNI Scanner module")
     parser.add_argument("--analyze", type=str, help="Analyze a single host")
     parser.add_argument("--input", type=str, help="Input file path (txt)")
-    parser.add_argument("--threads", type=int, default=10, help="Number of threads/concurrent tasks")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="Concurrent scan tasks (default: from settings / auto)",
+    )
     parser.add_argument("--ui", action="store_true", help="Launch Interactive UI")
     
     args = parser.parse_args()
@@ -1233,11 +1335,12 @@ def main():
                 console.print(f"[red]Error: File {args.input} not found.[/red]")
                 return
 
-            scanner = SNIScanner(threads=args.threads, timeout=GLOBAL_CONFIG["timeout"])
+            th = args.threads if args.threads is not None else GLOBAL_CONFIG["threads"]
+            scanner = SNIScanner(threads=th, timeout=GLOBAL_CONFIG["timeout"])
             saver = ResultSaver()
             results = []
 
-            console.print(f"[green]Starting scan on {len(lines)} hosts with {args.threads} threads...[/green]")
+            console.print(f"[green]Starting scan on {len(lines)} hosts with {th} concurrent tasks...[/green]")
 
             with app_ui.create_live_display():
                 async for result in scanner.scan_list(lines):

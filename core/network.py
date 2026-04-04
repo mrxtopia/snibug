@@ -39,7 +39,15 @@ class NetworkEngine:
         except Exception:
             return None, None
 
-    async def probe_sni(self, host: str, port: int = 443, sni: str = None, method: str = "HEAD", path: str = "/") -> dict:
+    async def probe_sni(
+        self,
+        host: str,
+        port: int = 443,
+        sni: str = None,
+        method: str = "HEAD",
+        path: str = "/",
+        include_peer_cert: bool = True,
+    ) -> dict:
         """
         Probes an SNI to see if it responds with a valid HTTP response.
         Returns a dict with status, code, tls_version, etc.
@@ -59,7 +67,7 @@ class NetworkEngine:
             tls_version = ssl_obj.version() if ssl_obj else "Unknown"
             cipher = ssl_obj.cipher() if ssl_obj else ("Unknown", 0, 0)
             peer_cert = {}
-            if ssl_obj:
+            if include_peer_cert and ssl_obj:
                 try:
                     peer_cert = ssl_obj.getpeercert() or {}
                 except Exception:

@@ -7,6 +7,7 @@ from rich.prompt import Prompt, Confirm
 from typing import List
 
 from version import VERSION
+from helpers.platform_utils import default_scan_threads, default_scan_timeout
 
 
 class AppUI:
@@ -264,10 +265,12 @@ free internet and tools for the community.
                 config['hosts'].append(host)
         
         # Threads
-        config['threads'] = int(Prompt.ask("Number of threads", default="10"))
-        
-        # Timeout
-        config['timeout'] = int(Prompt.ask("Timeout (seconds)", default="10"))
+        config["threads"] = int(
+            Prompt.ask("Concurrent tasks", default=str(default_scan_threads()))
+        )
+        config["timeout"] = int(
+            Prompt.ask("Timeout (seconds)", default=str(default_scan_timeout()))
+        )
         
         # HTTP Method (for applicable scans)
         if Prompt.ask("Use custom HTTP method?", choices=["y", "n"], default="n") == "y":
@@ -355,7 +358,9 @@ free internet and tools for the community.
         else:
             config['ports'] = list(range(1, 65536))
         
-        config['threads'] = int(Prompt.ask("Number of threads", default="50"))
+        config["threads"] = int(
+            Prompt.ask("Concurrent port checks", default=str(min(120, default_scan_threads())))
+        )
         
         return config
 
