@@ -6,7 +6,7 @@
 #   bash install_termux.sh
 #
 # Or fix line endings once, then:
-sed -i 's/\r$//' termux_setup.sh && bash termux_setup.sh
+# sed -i 's/\r$//' termux_setup.sh && bash termux_setup.sh
 #
 # Termux: use F-Droid or GitHub builds (not old Play Store app).
 #
