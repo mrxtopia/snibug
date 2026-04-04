@@ -55,10 +55,16 @@ class NetworkEngine:
         try:
             # Get TLS version from socket
             # writer.get_extra_info('ssl_object') returns the SSLObject
-            ssl_obj = writer.get_extra_info('ssl_object')
+            ssl_obj = writer.get_extra_info("ssl_object")
             tls_version = ssl_obj.version() if ssl_obj else "Unknown"
             cipher = ssl_obj.cipher() if ssl_obj else ("Unknown", 0, 0)
-            
+            peer_cert = {}
+            if ssl_obj:
+                try:
+                    peer_cert = ssl_obj.getpeercert() or {}
+                except Exception:
+                    peer_cert = {}
+
             # Send HTTP Request
             request = f"{method} {path} HTTP/1.1\r\nHost: {sni}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
             writer.write(request.encode())
@@ -72,28 +78,51 @@ class NetworkEngine:
             await writer.wait_closed()
             
             if not line:
-                return {"status": "FAILED", "reason": "Empty Response", "tls": tls_version}
+                return {
+                    "status": "FAILED",
+                    "reason": "Empty Response",
+                    "tls": tls_version,
+                    "peer_cert": peer_cert,
+                    "cipher": cipher[0] if cipher else "Unknown",
+                }
             
             if line.startswith("HTTP/"):
                 parts = line.split(" ")
-                status_code = parts[1] if len(parts) > 1 else "000"
+                code_raw = parts[1] if len(parts) > 1 else "000"
+                try:
+                    status_num = int(code_raw)
+                except ValueError:
+                    status_num = 0
                 return {
                     "status": "WORKING",
-                    "code": status_code,
+                    "code": code_raw,
+                    "status_code": status_num,
                     "tls": tls_version,
                     "cipher": cipher[0],
-                    "server_header": line 
+                    "server_header": line,
+                    "peer_cert": peer_cert,
                 }
             else:
-                 return {"status": "WEIRD", "reason": "Non-HTTP Response", "response_sample": line[:50], "tls": tls_version}
+                return {
+                    "status": "WEIRD",
+                    "reason": "Non-HTTP Response",
+                    "response_sample": line[:50],
+                    "tls": tls_version,
+                    "peer_cert": peer_cert,
+                    "cipher": cipher[0] if cipher else "Unknown",
+                }
 
         except asyncio.TimeoutError:
-             writer.close()
-             try: await writer.wait_closed()
-             except: pass
-             return {"status": "FAILED", "reason": "Read Timeout"}
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return {"status": "FAILED", "reason": "Read Timeout"}
         except Exception as e:
             writer.close()
-            try: await writer.wait_closed()
-            except: pass
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
             return {"status": "ERROR", "reason": str(e)}

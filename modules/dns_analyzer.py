@@ -9,14 +9,15 @@ class DNSAnalyzer:
         self.record_types = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME']
 
     async def get_records(self, domain: str) -> Dict[str, List[str]]:
-        results = {}
-        for rtype in self.record_types:
+        async def resolve_one(rtype: str) -> tuple:
             try:
                 answers = await self.resolver.resolve(domain, rtype)
-                results[rtype] = [str(r) for r in answers]
-            except:
-                results[rtype] = []
-        return results
+                return rtype, [str(r) for r in answers]
+            except Exception:
+                return rtype, []
+
+        pairs = await asyncio.gather(*(resolve_one(rt) for rt in self.record_types))
+        return dict(pairs)
 
     async def comprehensive_audit(self, domain: str) -> Dict:
         records = await self.get_records(domain)
