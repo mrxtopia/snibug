@@ -8,23 +8,23 @@ from typing import List
 import webbrowser
 import subprocess
 
-VERSION = "2.0.1"
-
 # --- SECURITY SYSTEM ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-# This dictionary contains the expected SHA-256 hashes of core project files.
-# If any file is edited, the tool will stop working to prevent unauthorized modified versions.
+from version import VERSION  # noqa: E402
+
+# Expected SHA-256 hashes of protected files (update when those files change).
 EXPECTED_HASHES = {
-    "ui/console.py": "e375cd80087695f10ad9a2ba57fcc1803745c771623ef2e40d4c58539a706c32",
-    "core/network.py": "4a33943e68f283b31270070c1251165f305495a7151af72ec4995fec7913bc03",
+    "version.py": "3dbccf9d1fbc92e0a41e164e9de076ef1e2815019ea0d51e101454745df9a79a",
+    "ui/console.py": "9ca921d017984475dfcc9c094915032f133c7f6df90693ae91c78823e2083388",
+    "core/network.py": "f026937f5f62c62cec8e38df17ce25a7c57a63980698c385bcca0c4870a3319e",
     "modules/sni_scanner.py": "1dceed0256911857984e017c055406833dd0e137ea6ea91d1a7252c382b7691d",
     "modules/payload_tester.py": "3b1d643b70e138b0e6957660e97189bdae8a3001f8bc9d4b85d14e8896330828",
     "modules/websocket_scanner.py": "25e1e34284b79420e0056f258c11511d8d6a7be0c73ad0534ace182bd768d910",
     "modules/cdn_detector.py": "c788c7337b4bdcb5568f0477b0481f1b5279d9e23de5e17d6ae7169e7c066659",
     "modules/info_lookup.py": "3e228a48eafba00791a305d74505a0c23f0092d6d218458e92d69a31acf0df6d",
-    "modules/protocol_audit.py": "b12493732a0156778925ec1aff888e8352267af8d3fc8287af3fe8670724725c"
+    "modules/protocol_audit.py": "1a22538f826219e14d7afac237fc7ac844d49e141b6df237789cbb04d4fb9ded",
 }
 
 def verify_integrity():
@@ -47,26 +47,34 @@ def verify_integrity():
 verify_integrity()
 
 def check_installation_lock():
-    """Ensure the tool was installed via the official setup script."""
+    """Ensure install marker is valid, or allow a git source tree for development."""
     marker_path = os.path.join(BASE_DIR, ".setup_success")
+    git_path = os.path.join(BASE_DIR, ".git")
     expected_token = "INSTALLED_BY_MRYT_INSTALLER_2026"
-    
+
     lock_error = """
 \033[1;31m[!] SECURITY LOCK: ILLEGAL INSTALLATION DETECTED\033[0m
 \033[1;33m[!] Error: The tool must be installed via 'termux_setup.sh'.\033[0m
-\033[1;37m[!] Manual cloning/copying is not allowed for security reasons.\033[0m
-\033[1;32m[+] Run: bash termux_setup.sh to fix this.\033[0m
+\033[1;37m[!] Copy the full project from GitHub or run the official installer.\033[0m
+\033[1;32m[+] Run: bash termux_setup.sh to create .setup_success\033[0m
 """
-    
-    if not os.path.exists(marker_path):
+
+    if os.path.isfile(marker_path):
+        with open(marker_path, "r", encoding="utf-8") as f:
+            if f.read().strip() == expected_token:
+                return
         print(lock_error)
         sys.exit(1)
-        
-    with open(marker_path, "r") as f:
-        actual_token = f.read().strip()
-        if actual_token != expected_token:
-            print(lock_error)
-            sys.exit(1)
+
+    if os.path.isdir(git_path):
+        print(
+            "\033[1;33m[!] Running from git clone (no .setup_success). "
+            "Production installs: run bash termux_setup.sh\033[0m\n"
+        )
+        return
+
+    print(lock_error)
+    sys.exit(1)
 
 # Check installation lock
 check_installation_lock()
@@ -88,11 +96,37 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
-from rich.progress import Progress
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 from export.saver import ResultSaver
 
 console = Console()
 app_ui = AppUI()
+
+GLOBAL_CONFIG = {
+    "threads": 10,
+    "timeout": 10,
+    "export_format": "json",
+}
+
+REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+def _http_status_numeric(result: dict) -> int:
+    """Normalize HTTP status from scanner output (supports legacy 'code' string)."""
+    c = result.get("status_code")
+    if isinstance(c, int):
+        return c
+    if c is not None:
+        try:
+            return int(c)
+        except (TypeError, ValueError):
+            pass
+    raw = result.get("code")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
 
 # ============================================================================
 # SCAN HANDLERS
@@ -115,17 +149,20 @@ async def run_direct_scan(config: dict):
     elif 'hosts' in config:
         hosts = config['hosts']
     
-    scanner = SNIScanner(threads=config.get('threads', 10))
+    th = config.get("threads", GLOBAL_CONFIG["threads"])
+    to = config.get("timeout", GLOBAL_CONFIG["timeout"])
+    method = config.get("method", "HEAD")
+    scanner = SNIScanner(threads=th, timeout=to, method=method)
     saver = ResultSaver()
     results = []
-    
-    console.print(f"[green]Scanning {len(hosts)} hosts with {config.get('threads', 10)} threads...[/green]")
-    
-    with app_ui.create_live_display() as live:
+
+    console.print(f"[green]Scanning {len(hosts)} hosts with {th} threads...[/green]")
+
+    with app_ui.create_live_display():
         async for result in scanner.scan_list(hosts):
             results.append(result)
             app_ui.add_result(result)
-    
+
     app_ui.display_results_summary(results)
     json_path = saver.save_json(results)
     txt_path = saver.save_txt(results)
@@ -148,16 +185,18 @@ async def run_non302_scan(config: dict):
     elif 'hosts' in config:
         hosts = config['hosts']
     
-    scanner = SNIScanner(threads=config.get('threads', 10), exclude_redirects=True)
+    th = config.get("threads", GLOBAL_CONFIG["threads"])
+    to = config.get("timeout", GLOBAL_CONFIG["timeout"])
+    method = config.get("method", "HEAD")
+    scanner = SNIScanner(threads=th, timeout=to, exclude_redirects=True, method=method)
     saver = ResultSaver()
     results = []
-    
-    console.print(f"[green]Scanning {len(hosts)} hosts (excluding 302 redirects)...[/green]")
-    
-    with app_ui.create_live_display() as live:
+
+    console.print(f"[green]Scanning {len(hosts)} hosts (excluding redirects)...[/green]")
+
+    with app_ui.create_live_display():
         async for result in scanner.scan_list(hosts):
-            # Filter out 302 responses
-            if result.get('status_code') not in [301, 302, 303, 307, 308]:
+            if _http_status_numeric(result) not in REDIRECT_STATUS_CODES:
                 results.append(result)
                 app_ui.add_result(result)
     
@@ -167,41 +206,67 @@ async def run_non302_scan(config: dict):
     console.print(f"[green]Results saved to:\n- {json_path}\n- {txt_path}[/green]")
 
 async def run_ssl_sni_analysis(config: dict):
-    """SSL/SNI configuration analysis."""
-    console.print("[bold cyan]Starting SSL/SNI Analysis...[/bold cyan]")
-    
+    """SSL/SNI analysis: parallel TLS+HTTP and WebSocket probes, Rich summary + detail panels."""
+    console.print("[bold cyan]SSL / SNI analysis[/bold cyan] [dim](parallel probes per host)[/dim]")
+
     hosts = []
-    if 'input_file' in config:
+    if "input_file" in config:
         try:
-            with open(config['input_file'], 'r') as f:
-                hosts = [l.strip() for l in f if l.strip()]
+            with open(config["input_file"], "r", encoding="utf-8") as f:
+                hosts = [ln.strip() for ln in f if ln.strip()]
         except FileNotFoundError:
             console.print(f"[red]Error: File {config['input_file']} not found.[/red]")
             return
-    elif 'single_host' in config:
-        hosts = [config['single_host']]
-    elif 'hosts' in config:
-        hosts = config['hosts']
-    
+    elif "single_host" in config:
+        hosts = [config["single_host"]]
+    elif "hosts" in config:
+        hosts = config["hosts"]
+
     if not hosts:
         console.print("[red]Error: No hosts provided for analysis.[/red]")
         return
 
-    analyzer = HostAnalyzer()
-    
-    for host in hosts:
-        port = 443
-        if ':' in host:
-            try:
-                h, p = host.split(':')
-                host = h
-                port = int(p)
-            except:
-                pass
-        
-        console.print(f"[yellow]Analysing {host}:{port}...[/yellow]")
-        result = await analyzer.analyze(host, port)
-        console.print(Panel(str(result), title=f"SSL/SNI Analysis: {host}:{port}", border_style="cyan"))
+    timeout = int(config.get("timeout", GLOBAL_CONFIG["timeout"]))
+    threads = int(config.get("threads", GLOBAL_CONFIG["threads"]))
+    concurrency = min(32, max(2, threads))
+    targets = [HostAnalyzer.parse_target(h) for h in hosts]
+    analyzer = HostAnalyzer(timeout=timeout)
+    sem = asyncio.Semaphore(concurrency)
+    n = len(targets)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("({task.completed}/{task.total})"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        tid = progress.add_task("[cyan]Analyzing TLS + HTTP + WebSocket…[/cyan]", total=n)
+
+        async def work(i: int, host: str, port: int):
+            async with sem:
+                r = await analyzer.analyze(host, port)
+            progress.advance(tid)
+            return i, r
+
+        pairs = await asyncio.gather(*(work(i, h, p) for i, (h, p) in enumerate(targets)))
+
+    results = [r for _, r in sorted(pairs, key=lambda x: x[0])]
+
+    app_ui.print_ssl_analysis_summary_table(results)
+    if len(results) <= 5:
+        for r in results:
+            app_ui.print_ssl_analysis_detail_panels(r)
+    else:
+        console.print(
+            "[dim]Showing full certificate panels for failed targets only "
+            "(use ≤5 hosts or single-host input for every detail).[/dim]"
+        )
+        for r in results:
+            if not r.get("ok"):
+                app_ui.print_ssl_analysis_detail_panels(r)
 
 async def run_proxy_test(config: dict):
     """Proxy validation for tunneling compatibility."""
@@ -279,15 +344,21 @@ async def run_custom_method_scan(config: dict):
     elif 'single_host' in config:
         hosts = [config['single_host']]
     
-    scanner = SNIScanner(threads=config.get('threads', 10), method=method)
+    th = config.get("threads", GLOBAL_CONFIG["threads"])
+    to = config.get("timeout", GLOBAL_CONFIG["timeout"])
+    scanner = SNIScanner(threads=th, timeout=to, method=method)
     results = []
-    
-    with app_ui.create_live_display() as live:
+    saver = ResultSaver()
+
+    with app_ui.create_live_display():
         async for result in scanner.scan_list(hosts):
             results.append(result)
             app_ui.add_result(result)
-    
+
     app_ui.display_results_summary(results)
+    json_path = saver.save_json(results)
+    txt_path = saver.save_txt(results)
+    console.print(f"[green]Results saved to:\n- {json_path}\n- {txt_path}[/green]")
 
 async def run_multi_mode_scan(config: dict):
     """Multi-mode batch scanning."""
@@ -305,14 +376,39 @@ async def run_multi_mode_scan(config: dict):
         return
 
     analyzer = HostAnalyzer()
-    
+    rows = []
+
+    def _parse_target(line: str):
+        s = line.strip().replace("https://", "").replace("http://", "").strip("/")
+        if s.count(":") == 1:
+            h, p = s.split(":", 1)
+            if p.isdigit():
+                return h, int(p)
+        return s, 443
+
     with Progress() as progress:
         task = progress.add_task("[cyan]Analyzing hosts...", total=len(hosts))
-        for host in hosts:
-            res = await analyzer.analyze(host)
-            # We would normally display this in a table or save it
+        for line in hosts:
+            host, port = _parse_target(line)
+            res = await analyzer.analyze(host, port)
+            modes = ", ".join(res.get("modes") or [])
+            err = res.get("error", "")
+            if err:
+                note = err
+            else:
+                note = f"HTTP {res.get('http_status', '—')} · {res.get('tls_version', '—')}"
+            rows.append((f"{host}:{port}", modes or "—", note))
             progress.update(task, advance=1)
-    
+
+    table = Table(title="Multi-mode batch results")
+    table.add_column("Target", style="cyan")
+    table.add_column("Modes", style="green")
+    table.add_column("Note", style="dim")
+    for target, modes, note in rows[:200]:
+        table.add_row(target, modes, note)
+    if len(rows) > 200:
+        console.print(f"[dim]Showing 200 of {len(rows)} rows.[/dim]")
+    console.print(table)
     console.print("[green]Multi-mode scan complete![/green]")
 
 # ============================================================================
@@ -360,10 +456,16 @@ async def run_batch_domain_enum(config: dict):
         return
 
     finder = SubdomainFinder()
+    os.makedirs("results", exist_ok=True)
     for domain in domains:
         console.print(f"[green]Enumerating: {domain}[/green]")
         subs = await finder.find_subdomains(domain)
         console.print(f"  [cyan]Found {len(subs)} subdomains[/cyan]")
+        safe = domain.replace(".", "_").replace("/", "_")
+        out_path = os.path.join("results", f"subdomains_batch_{safe}.txt")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(subs))
+        console.print(f"  [dim]Saved: {out_path}[/dim]")
 
 # ============================================================================
 # IP LOOKUP HANDLERS
@@ -372,10 +474,21 @@ async def run_batch_domain_enum(config: dict):
 async def run_reverse_ip_lookup(config: dict):
     """Reverse IP lookup."""
     console.print("[bold yellow]Starting Reverse IP Lookup...[/bold yellow]")
-    
-    ip = config.get('ip', '')
+
+    ip = config.get("ip", "")
+    if not ip and config.get("file"):
+        try:
+            with open(config["file"], "r", encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+            ip = lines[0] if lines else ""
+            if len(lines) > 1:
+                console.print(f"[dim]Using first IP from file ({len(lines)} lines); run again for others if needed.[/dim]")
+        except OSError as e:
+            console.print(f"[red]Error reading file: {e}[/red]")
+            return
+
     if not ip:
-        console.print("[red]Error: IP address required.[/red]")
+        console.print("[red]Error: IP address or valid file required.[/red]")
         return
 
     lookup = InfoLookup()
@@ -507,57 +620,68 @@ async def run_dns_analysis(config: dict):
     """DNS record analysis."""
     console.print("[bold red]Starting DNS Record Analysis...[/bold red]")
     
-    host = config.get('host', '')
-    if not host:
+    raw = (config.get("host") or "").strip()
+    if not raw:
         console.print("[red]Error: Host required.[/red]")
         return
 
+    host, _ = HostAnalyzer.parse_target(raw)
     analyzer = DNSAnalyzer()
     results = await analyzer.get_records(host)
-    
-    for rtype, rdata in results.items():
-        if rdata:
-            console.print(f"[bold cyan]{rtype} Records:[/bold cyan]")
-            for r in rdata:
-                console.print(f"  - {r}")
+    app_ui.print_dns_records_table(results, f"DNS records — {host}")
 
 async def run_ssl_validation(config: dict):
-    """SSL certificate validation."""
-    console.print("[bold red]Starting SSL Certificate Validation...[/bold red]")
-    
-    host = config.get('host', '')
-    analyzer = HostAnalyzer()
-    result = await analyzer.analyze(host, 443)
-    
-    console.print(Panel(str(result), title=f"SSL Certificate: {host}", border_style="red"))
+    """SSL / SNI validation with structured certificate view."""
+    console.print("[bold red]SSL certificate validation[/bold red] [dim](TLS + HTTP + WebSocket)[/dim]")
 
-async def run_comprehensive_audit(config: dict):
-    """Comprehensive DNS+SSL audit."""
-    console.print("[bold red]Starting Comprehensive DNS+SSL Audit...[/bold red]")
-    
-    host = config.get('host', '')
+    raw = (config.get("host") or "").strip()
+    host, port = HostAnalyzer.parse_target(raw)
     if not host:
         console.print("[red]Error: Host required.[/red]")
         return
 
+    to = int(config.get("timeout", GLOBAL_CONFIG["timeout"]))
+    analyzer = HostAnalyzer(timeout=to)
+    result = await analyzer.analyze(host, port)
+    app_ui.print_ssl_analysis_summary_table([result])
+    app_ui.print_ssl_analysis_detail_panels(result)
+
+async def run_comprehensive_audit(config: dict):
+    """DNS + TLS/HTTP audit (parallel DNS lookups and protocol probe)."""
+    console.print("[bold red]Comprehensive DNS + TLS audit[/bold red] [dim](parallel)[/dim]")
+
+    raw = (config.get("host") or "").strip()
+    if not raw:
+        console.print("[red]Error: Host required.[/red]")
+        return
+
+    host, port = HostAnalyzer.parse_target(raw)
+    to = int(config.get("timeout", GLOBAL_CONFIG["timeout"]))
+
     dns_analyzer = DNSAnalyzer()
-    protocol_audit = ProtocolAudit()
-    
-    # Run in parallel
+    protocol_audit = ProtocolAudit(timeout=to)
+
     dns_task = dns_analyzer.comprehensive_audit(host)
-    protocol_task = protocol_audit.audit(host)
-    
+    protocol_task = protocol_audit.audit(host, port)
     dns_res, protocol_res = await asyncio.gather(dns_task, protocol_task)
-    
-    # Display DNS
-    console.print(Panel(str(dns_res['records']), title=f"DNS Records: {host}", border_style="cyan"))
-    
-    # Display Protocol/SSL
-    if 'error' in protocol_res:
-        console.print(f"[red]Protocol Audit Error: {protocol_res['error']}[/red]")
-    else:
-        info = f"Protocols: {', '.join(protocol_res['protocols'])}\nIssuer: {protocol_res['ssl_info'].get('issuer', {}).get('commonName', 'N/A')}"
-        console.print(Panel(info, title=f"SSL/Protocol Audit: {host}", border_style="magenta"))
+
+    app_ui.print_dns_records_table(dns_res["records"], f"DNS — {host}")
+    app_ui.print_protocol_audit_report(protocol_res, f"TLS & HTTP — {host}:{port}")
+
+async def run_protocol_audit(config: dict):
+    """Run protocol and certificate audit (non-blocking cert fetch + httpx)."""
+    target = (config.get("target") or "").strip()
+    if not target:
+        console.print("[red]Error: Target required.[/red]")
+        return
+
+    host, port = HostAnalyzer.parse_target(target)
+    to = int(config.get("timeout", GLOBAL_CONFIG["timeout"]))
+    audit = ProtocolAudit(timeout=to)
+    console.print(f"[bold deep_sky_blue1]Protocol audit[/bold deep_sky_blue1] [dim]{host}:{port}[/dim]")
+
+    result = await audit.audit(host, port)
+    app_ui.print_protocol_audit_report(result, f"Protocol & certificate — {host}:{port}")
 
 # ============================================================================
 # FILE MANAGEMENT HANDLERS
@@ -773,38 +897,9 @@ async def run_info_lookup(config: dict):
     whois_info = f"Registrar: {w.get('registrar', 'N/A')}\nOrg: {w.get('org', 'N/A')}\nCreated: {w.get('creation_date', 'N/A')}\nExpires: {w.get('expiration_date', 'N/A')}"
     console.print(Panel(whois_info, title="WHOIS Information", border_style="magenta"))
 
-async def run_protocol_audit(config: dict):
-    """Run Protocol and Certificate audit."""
-    target = config.get('target', '')
-    
-    audit = ProtocolAudit()
-    console.print(f"[bold deep_sky_blue1]Auditing Protocol for {target}...[/bold deep_sky_blue1]")
-    
-    result = await audit.audit(target)
-    
-    if result.get('error'):
-        console.print(f"[red]Error: {result['error']}[/red]")
-        return
-        
-    # Protocols and Cert info
-    info = f"Protocols Found: {', '.join(result['protocols'])}\n\nCertificate Info:\n"
-    for k, v in result['ssl_info'].get('subject', {}).items():
-        info += f"  - Subject {k}: {v}\n"
-    for k, v in result['ssl_info'].get('issuer', {}).items():
-        info += f"  - Issuer {k}: {v}\n"
-    
-    console.print(Panel(info, title="Protocol & SSL Certificate Audit", border_style="bright_blue"))
-
 # ============================================================================
 # SETTINGS & UTILITIES
 # ============================================================================
-
-# Global Config
-GLOBAL_CONFIG = {
-    "threads": 10,
-    "timeout": 10,
-    "export_format": "json"
-}
 
 def handle_settings():
     """Configure global settings."""
@@ -828,57 +923,63 @@ async def handle_about_me():
             Prompt.ask("\nPress Enter to continue")
         elif choice == "3":
             console.print("[bold blue]Opening Telegram channel...[/bold blue]")
-            # In Termux/Linux try termux-open or similar
-            os.system("termux-open https://t.me/yt_netsa_official 2>/dev/null || start https://t.me/yt_netsa_official 2>/dev/null")
+            webbrowser.open("https://t.me/yt_netsa_official")
             Prompt.ask("\nPress Enter to continue")
         elif choice == "0":
             break
 
 async def handle_update():
-    """Check for and apply updates from GitHub."""
+    """Compare local version to GitHub and update via git pull when available."""
     console.print("[bold cyan]Checking for updates...[/bold cyan]")
-    
     repo_url = "https://github.com/mrxtopia/snibug"
-    raw_url = "https://raw.githubusercontent.com/mrxtopia/snibug/main/main.py"
-    
+    raw_version_url = "https://raw.githubusercontent.com/mrxtopia/snibug/main/version.py"
+
     try:
         import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(raw_url, timeout=10) as resp:
-                if resp.status == 200:
-                    content = await resp.text()
-                    remote_version = "Unknown"
-                    for line in content.split('\n'):
-                        if 'VERSION =' in line:
-                            remote_version = line.split('=')[1].strip().strip('"').strip("'")
-                            break
-                    
-                    if remote_version != VERSION and remote_version != "Unknown":
-                        console.print(f"[bold green]Update Found![/bold green] (v{VERSION} -> v{remote_version})")
-                        if Confirm.ask("Do you want to update now?"):
-                            console.print("[yellow]Updating tool...[/yellow]")
-                            # Simple update: try git pull if in a git repo, otherwise overwrite main.py
-                            if os.path.exists(os.path.join(BASE_DIR, ".git")):
-                                try:
-                                    subprocess.run(["git", "pull"], cwd=BASE_DIR, check=True)
-                                    console.print("[bold green]Successfully updated via git![/bold green]")
-                                    console.print("[yellow]Please restart the tool.[/yellow]")
-                                    sys.exit(0)
-                                except:
-                                    console.print("[red]Git pull failed. Trying manual update...[/red]")
-                            
-                            # Manual update: overwrite files
-                            with open(os.path.join(BASE_DIR, "main.py"), "w", encoding="utf-8") as f:
-                                f.write(content)
-                            console.print("[bold green]Main script updated successfully![/bold green]")
-                            console.print("[yellow]Please restart the tool to apply changes.[/yellow]")
-                            sys.exit(0)
-                    else:
-                        console.print("[green]No updates found. You are on the latest version.[/green]")
-                else:
-                    console.print("[red]Could not connect to update server.[/red]")
+
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(raw_version_url) as resp:
+                if resp.status != 200:
+                    console.print("[red]Could not fetch version from GitHub.[/red]")
+                    return
+                content = await resp.text()
+
+        remote_version = "Unknown"
+        for line in content.split("\n"):
+            line = line.split("#")[0].strip()
+            if line.startswith("VERSION"):
+                _, _, rhs = line.partition("=")
+                remote_version = rhs.strip().strip('"').strip("'")
+                break
+
+        if remote_version == "Unknown":
+            console.print("[red]Could not parse remote version file.[/red]")
+            return
+
+        if remote_version != VERSION:
+            console.print(f"[bold green]Update available[/bold green] (v{VERSION} → v{remote_version})")
+            if not Confirm.ask("Run git pull in this folder now?"):
+                return
+            git_dir = os.path.join(BASE_DIR, ".git")
+            if os.path.isdir(git_dir):
+                try:
+                    subprocess.run(
+                        ["git", "pull"],
+                        cwd=BASE_DIR,
+                        check=True,
+                    )
+                    console.print("[bold green]Update complete. Restart the tool.[/bold green]")
+                    sys.exit(0)
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    console.print(f"[red]Git pull failed: {e}[/red]")
+            console.print(
+                f"[yellow]This folder is not a git clone. Download the full project from:[/yellow]\n[cyan]{repo_url}[/cyan]"
+            )
+        else:
+            console.print("[green]You are on the latest version.[/green]")
     except Exception as e:
-        console.print(f"[red]Update check failed: {str(e)}[/red]")
+        console.print(f"[red]Update check failed: {e}[/red]")
 
 def handle_view_results():
     """View previous scan results."""
@@ -1109,19 +1210,13 @@ def main():
 
     if args.analyze:
         async def analyze():
-            host = args.analyze
-            if ":" in host:
-                h, p = host.split(":")
-                port = int(p)
-                host = h
-            else:
-                port = 443
-            
-            console.print(f"[cyan]Analyzing {host}:{port}...[/cyan]")
-            analyzer = HostAnalyzer()
+            host, port = HostAnalyzer.parse_target(args.analyze)
+            console.print(f"[cyan]SSL / SNI analysis[/cyan] [dim]{host}:{port}[/dim]")
+            analyzer = HostAnalyzer(timeout=GLOBAL_CONFIG["timeout"])
             result = await analyzer.analyze(host, port)
-            console.print(Panel(str(result), title="Analysis Report"))
-        
+            app_ui.print_ssl_analysis_summary_table([result])
+            app_ui.print_ssl_analysis_detail_panels(result)
+
         loop.run_until_complete(analyze())
         return
     
@@ -1138,13 +1233,13 @@ def main():
                 console.print(f"[red]Error: File {args.input} not found.[/red]")
                 return
 
-            scanner = SNIScanner(threads=args.threads)
+            scanner = SNIScanner(threads=args.threads, timeout=GLOBAL_CONFIG["timeout"])
             saver = ResultSaver()
             results = []
-            
+
             console.print(f"[green]Starting scan on {len(lines)} hosts with {args.threads} threads...[/green]")
-            
-            with app_ui.create_live_display() as live:
+
+            with app_ui.create_live_display():
                 async for result in scanner.scan_list(lines):
                     results.append(result)
                     app_ui.add_result(result)
